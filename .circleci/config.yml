@@ -1,0 +1,35 @@
+version: 2.1
+
+jobs:
+  build:
+    machine:
+      image: ubuntu-2204:2022.07.1
+    steps:
+      - checkout
+      - run: sudo apt install yasm nasm
+      - run: ./configure --prefix=$(pwd)/out && make && make install
+      - run: mkdir -p build && cd out && tar -cvzf ../build/ffmpeg-2.8.tar .
+      - persist_to_workspace:
+          root: build
+          paths:
+            - ffmpeg-2.8.tar
+  publish:
+    machine:
+      image: ubuntu-2204:2022.07.1
+    steps:
+      - checkout
+      - attach_workspace:
+          at: build
+      - run: aws s3 cp build/ffmpeg-2.8.tar s3://wmg-deploy/ffmpeg-2.8.tar
+
+workflows:
+  version: 2
+  build-and-publish:
+    jobs:
+      - build
+      - publish:
+          requires:
+            - build
+          filters:
+            branches:
+              only: vendor
