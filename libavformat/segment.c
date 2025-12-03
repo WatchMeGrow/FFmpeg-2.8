@@ -92,6 +92,7 @@ typedef struct SegmentContext {
     char *time_str;        ///< segment duration specification string
     int64_t time;          ///< segment duration
     int use_strftime;      ///< flag to expand filename with strftime
+    int use_strftime_mkdir; ///< flag to mkdir in timebased filename
 
     char *times_str;       ///< segment times specification string
     int64_t *times;        ///< list of segment interval specification
@@ -199,6 +200,21 @@ static int set_segment_filename(AVFormatContext *s)
                                      s->filename, seg->segment_idx) < 0) {
         av_log(oc, AV_LOG_ERROR, "Invalid segment filename template '%s'\n", s->filename);
         return AVERROR(EINVAL);
+    }
+
+    if (seg->use_strftime_mkdir) {
+        const char *dir;
+        char *filename_copy = av_strdup(oc->filename);
+        if (!filename_copy)
+            return AVERROR(ENOMEM);
+        dir = av_dirname(filename_copy);
+        av_freep(&filename_copy);
+        if (ff_mkdir_p(dir) == -1 && errno != EEXIST) {
+            av_log(oc, AV_LOG_ERROR, "Could not create directory %s with use_strftime_mkdir\n", dir);
+            av_freep(&filename_copy);
+            return AVERROR(errno);
+        }
+        av_freep(&filename_copy);
     }
 
     /* copy modified name in list entry */
@@ -935,6 +951,7 @@ static const AVOption options[] = {
     { "segment_start_number", "set the sequence number of the first segment", OFFSET(segment_idx), AV_OPT_TYPE_INT, {.i64 = 0}, 0, INT_MAX, E },
     { "segment_wrap_number", "set the number of wrap before the first segment", OFFSET(segment_idx_wrap_nb), AV_OPT_TYPE_INT, {.i64 = 0}, 0, INT_MAX, E },
     { "strftime",          "set filename expansion with strftime at segment creation", OFFSET(use_strftime), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 1, E },
+    { "strftime_mkdir",          "create last directory component in strftime-generated filename", OFFSET(use_strftime_mkdir), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 1, E },
     { "break_non_keyframes", "allow breaking segments on non-keyframes", OFFSET(break_non_keyframes), AV_OPT_TYPE_INT, {.i64 = 0}, 0, 1, E },
 
     { "individual_header_trailer", "write header/trailer to each segment", OFFSET(individual_header_trailer), AV_OPT_TYPE_INT, {.i64 = 1}, 0, 1, E },
