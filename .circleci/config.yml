@@ -1,5 +1,6 @@
 version: 2.1
-
+orbs:
+  circleci/aws-cli@5.4.1:
 jobs:
   build:
     machine:
@@ -14,13 +15,20 @@ jobs:
           paths:
             - ffmpeg-2.8.tar
   publish:
-    machine:
-      image: ubuntu-2204:2025.09.1
+    environment:
+      AWS_REGION: us-west-2
+    docker:
+      - image: cimg/aws:2025.01.1
     steps:
       - checkout
+      - aws-cli/setup:
+          role_arn: "arn:aws:iam::327466685659:role/circle-ci-ffmpeg2.8-wmg-deploy-s3"
+          aws-region: ${AWS_REGION}
+          profile-name: "oidc-profile"
       - attach_workspace:
           at: build
-      - run: aws s3 cp build/ffmpeg-2.8.tar s3://wmg-deploy/ffmpeg-2.8.tar
+      - run: |
+          aws s3 cp build/ffmpeg-2.8.tar s3://wmg-deploy/ffmpeg-2.8.tar --profile "oidc-profile"
 
 workflows:
   version: 2
