@@ -3,7 +3,7 @@ version: 2.1
 jobs:
   build:
     machine:
-      image: ubuntu-2204
+      image: ubuntu-2204:2025.09.1
     steps:
       - checkout
       - run: sudo apt install yasm nasm
@@ -15,7 +15,7 @@ jobs:
             - ffmpeg-2.8.tar
   publish:
     machine:
-      image: ubuntu-2204:2022.07.1
+      image: ubuntu-2204:2025.09.1
     steps:
       - checkout
       - attach_workspace:
