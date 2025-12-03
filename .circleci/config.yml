@@ -24,7 +24,7 @@ jobs:
       - checkout
       - aws-cli/setup:
           role_arn: "arn:aws:iam::327466685659:role/circle-ci-ffmpeg2.8-wmg-deploy-s3"
-          aws_region: ${AWS_REGION}
+          region: ${AWS_REGION}
           profile_name: "oidc-profile"
       - attach_workspace:
           at: build
