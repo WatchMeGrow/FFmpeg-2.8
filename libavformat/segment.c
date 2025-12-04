@@ -208,7 +208,6 @@ static int set_segment_filename(AVFormatContext *s)
         if (!filename_copy)
             return AVERROR(ENOMEM);
         dir = av_dirname(filename_copy);
-        av_freep(&filename_copy);
         if (ff_mkdir_p(dir) == -1 && errno != EEXIST) {
             av_log(oc, AV_LOG_ERROR, "Could not create directory %s with use_strftime_mkdir\n", dir);
             av_freep(&filename_copy);
