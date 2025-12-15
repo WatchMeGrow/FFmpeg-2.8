@@ -177,8 +177,7 @@ static int hls_delete_old_segments(HLSContext *hls) {
             goto fail;
         }
 
-        av_strlcpy(path, dirname, path_size);
-        av_strlcat(path, segment->filename, path_size);
+        // check paths: here's error
         if (unlink(path) < 0) {
             av_log(hls, AV_LOG_ERROR, "failed to delete old segment %s: %s\n",
                                      path, strerror(errno));
