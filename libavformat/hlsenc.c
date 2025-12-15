@@ -118,8 +118,8 @@ typedef struct HLSContext {
 
 } HLSContext;
 
-static int hls_delete_old_segments(HLSContext *hls) {
-
+static int hls_delete_old_segments(AVFormatContext *s) {
+    HLSContext *hls = s->priv_data;
     HLSSegment *segment, *previous_segment = NULL;
     float playlist_duration = 0.0f;
     int ret = 0, path_size, sub_path_size;
@@ -143,8 +143,11 @@ static int hls_delete_old_segments(HLSContext *hls) {
         }
     }
 
-    if (segment && !hls->use_localtime_mkdir) {
-        if (hls->segment_filename) {
+    if (segment) {
+        if (hls->use_localtime_mkdir) {
+            /* Use playlist directory as base for relative segment paths */
+            dirname = av_strdup(s->filename);
+        } else if (hls->segment_filename) {
             dirname = av_strdup(hls->segment_filename);
         } else {
             dirname = av_strdup(hls->avf->filename);
@@ -159,25 +162,15 @@ static int hls_delete_old_segments(HLSContext *hls) {
 
     while (segment) {
         av_log(hls, AV_LOG_DEBUG, "deleting old segment %s\n", segment->filename);
-
-        if (hls->use_localtime_mkdir) {
-            // filename already contains full path
-            path = av_strdup(segment->filename);
-        } else {
-            path_size = strlen(dirname) + strlen(segment->filename) + 1;
-            path = av_malloc(path_size);
-            if (path) {
-                av_strlcpy(path, dirname, path_size);
-                av_strlcat(path, segment->filename, path_size);
-            }
-        }
-
+        path_size = strlen(dirname) + strlen(segment->filename) + 1;
+        path = av_malloc(path_size);
         if (!path) {
             ret = AVERROR(ENOMEM);
             goto fail;
         }
+        av_strlcpy(path, dirname, path_size);
+        av_strlcat(path, segment->filename, path_size);
 
-        // check paths: here's error
         if (unlink(path) < 0) {
             av_log(hls, AV_LOG_ERROR, "failed to delete old segment %s: %s\n",
                                      path, strerror(errno));
@@ -370,7 +363,7 @@ static int hls_append_segment(AVFormatContext *s, HLSContext *hls,
                 !(hls->flags & HLS_SINGLE_FILE || hls->wrap)) {
             en->next = hls->old_segments;
             hls->old_segments = en;
-            if ((ret = hls_delete_old_segments(hls)) < 0)
+            if ((ret = hls_delete_old_segments(s)) < 0)
                 return ret;
         } else
             av_free(en);
