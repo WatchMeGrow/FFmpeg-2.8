@@ -26,6 +26,7 @@
 
 /* #define DEBUG */
 
+#include <errno.h>
 #include <float.h>
 #include <time.h>
 
