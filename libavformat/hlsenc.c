@@ -22,6 +22,7 @@
 #include "config.h"
 #include <float.h>
 #include <stdint.h>
+#include <errno.h>
 #if HAVE_UNISTD_H
 #include <unistd.h>
 #endif
@@ -37,6 +38,7 @@
 #include "avformat.h"
 #include "internal.h"
 #include "os_support.h"
+
 
 #define KEYSIZE 16
 #define LINE_BUFFER_SIZE 1024
@@ -81,6 +83,7 @@ typedef struct HLSContext {
     char *segment_filename;
 
     int use_localtime;      ///< flag to expand filename with localtime
+    int use_localtime_mkdir;///< flag to mkdir dirname in timebased filename
     int allowcache;
     int64_t recording_time;
     int has_video;
@@ -115,8 +118,8 @@ typedef struct HLSContext {
 
 } HLSContext;
 
-static int hls_delete_old_segments(HLSContext *hls) {
-
+static int hls_delete_old_segments(AVFormatContext *s) {
+    HLSContext *hls = s->priv_data;
     HLSSegment *segment, *previous_segment = NULL;
     float playlist_duration = 0.0f;
     int ret = 0, path_size, sub_path_size;
@@ -141,7 +144,10 @@ static int hls_delete_old_segments(HLSContext *hls) {
     }
 
     if (segment) {
-        if (hls->segment_filename) {
+        if (hls->use_localtime_mkdir) {
+            /* Use playlist directory as base for relative segment paths */
+            dirname = av_strdup(s->filename);
+        } else if (hls->segment_filename) {
             dirname = av_strdup(hls->segment_filename);
         } else {
             dirname = av_strdup(hls->avf->filename);
@@ -155,17 +161,16 @@ static int hls_delete_old_segments(HLSContext *hls) {
     }
 
     while (segment) {
-        av_log(hls, AV_LOG_DEBUG, "deleting old segment %s\n",
-                                  segment->filename);
+        av_log(hls, AV_LOG_DEBUG, "deleting old segment %s\n", segment->filename);
         path_size = strlen(dirname) + strlen(segment->filename) + 1;
         path = av_malloc(path_size);
         if (!path) {
             ret = AVERROR(ENOMEM);
             goto fail;
         }
-
         av_strlcpy(path, dirname, path_size);
         av_strlcat(path, segment->filename, path_size);
+
         if (unlink(path) < 0) {
             av_log(hls, AV_LOG_ERROR, "failed to delete old segment %s: %s\n",
                                      path, strerror(errno));
@@ -300,16 +305,34 @@ static int hls_mux_init(AVFormatContext *s)
 }
 
 /* Create a new segment and append it to the segment list */
-static int hls_append_segment(HLSContext *hls, double duration, int64_t pos,
-                              int64_t size)
+static int hls_append_segment(AVFormatContext *s, HLSContext *hls,
+                              double duration, int64_t pos, int64_t size)
 {
     HLSSegment *en = av_malloc(sizeof(*en));
+    const char *filename;
+    char *tmp;
+    const char *pl_dir;
     int ret;
 
     if (!en)
         return AVERROR(ENOMEM);
 
-    av_strlcpy(en->filename, av_basename(hls->avf->filename), sizeof(en->filename));
+    filename = av_basename(hls->avf->filename);
+
+    if (hls->use_localtime_mkdir) {
+        /* Store relative path from playlist directory, preserving date subdirs */
+        tmp = av_strdup(s->filename);
+        if (!tmp) {
+            av_free(en);
+            return AVERROR(ENOMEM);
+        }
+        pl_dir = av_dirname(tmp);
+        if (strstr(hls->avf->filename, pl_dir) == hls->avf->filename)
+            filename = hls->avf->filename + strlen(pl_dir) + 1;
+        av_free(tmp);
+    }
+
+    av_strlcpy(en->filename, filename, sizeof(en->filename));
 
     if(hls->has_subtitle)
         av_strlcpy(en->sub_filename, av_basename(hls->vtt_avf->filename), sizeof(en->sub_filename));
@@ -340,7 +363,7 @@ static int hls_append_segment(HLSContext *hls, double duration, int64_t pos,
                 !(hls->flags & HLS_SINGLE_FILE || hls->wrap)) {
             en->next = hls->old_segments;
             hls->old_segments = en;
-            if ((ret = hls_delete_old_segments(hls)) < 0)
+            if ((ret = hls_delete_old_segments(s)) < 0)
                 return ret;
         } else
             av_free(en);
@@ -496,6 +519,21 @@ static int hls_start(AVFormatContext *s)
             if (!strftime(oc->filename, sizeof(oc->filename), c->basename, tm)) {
                 av_log(oc, AV_LOG_ERROR, "Could not get segment filename with use_localtime\n");
                 return AVERROR(EINVAL);
+            }
+
+            if (c->use_localtime_mkdir) {
+                char *fn_copy = av_strdup(oc->filename);
+                const char *dir;
+                if (!fn_copy) {
+                    return AVERROR(ENOMEM);
+                }
+                dir = av_dirname(fn_copy);
+                if (ff_mkdir_p(dir) == -1 && errno != EEXIST) {
+                    av_log(oc, AV_LOG_ERROR, "Could not create directory %s with use_localtime_mkdir\n", dir);
+                    av_free(fn_copy);
+                    return AVERROR(errno);
+                }
+                av_free(fn_copy);
             }
        } else if (av_get_frame_filename(oc->filename, sizeof(oc->filename),
                                   c->basename, c->wrap ? c->sequence % c->wrap : c->sequence) < 0) {
@@ -754,7 +792,7 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
 
         new_start_pos = avio_tell(hls->avf->pb);
         hls->size = new_start_pos - hls->start_pos;
-        ret = hls_append_segment(hls, hls->duration, hls->start_pos, hls->size);
+        ret = hls_append_segment(s, hls, hls->duration, hls->start_pos, hls->size);
         hls->start_pos = new_start_pos;
         if (ret < 0)
             return ret;
@@ -801,7 +839,7 @@ static int hls_write_trailer(struct AVFormatContext *s)
     if (oc->pb) {
         hls->size = avio_tell(hls->avf->pb) - hls->start_pos;
         avio_closep(&oc->pb);
-        hls_append_segment(hls, hls->duration, hls->start_pos, hls->size);
+        hls_append_segment(s, hls, hls->duration, hls->start_pos, hls->size);
     }
 
     if (vtt_oc) {
@@ -847,7 +885,8 @@ static const AVOption options[] = {
     {"round_durations", "round durations in m3u8 to whole numbers", 0, AV_OPT_TYPE_CONST, {.i64 = HLS_ROUND_DURATIONS }, 0, UINT_MAX,   E, "flags"},
     {"discont_start", "start the playlist with a discontinuity tag", 0, AV_OPT_TYPE_CONST, {.i64 = HLS_DISCONT_START }, 0, UINT_MAX,   E, "flags"},
     {"omit_endlist", "Do not append an endlist when ending stream", 0, AV_OPT_TYPE_CONST, {.i64 = HLS_OMIT_ENDLIST }, 0, UINT_MAX,   E, "flags"},
-    { "use_localtime",          "set filename expansion with strftime at segment creation", OFFSET(use_localtime), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 1, E },
+    { "strftime",          "set filename expansion with strftime at segment creation", OFFSET(use_localtime), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 1, E },
+    { "strftime_mkdir", "create last level of the path given in use_localtime", OFFSET(use_localtime_mkdir), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 1, E },
 
     { NULL },
 };

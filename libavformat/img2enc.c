@@ -20,6 +20,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include <errno.h>
+
 #include "libavutil/intreadwrite.h"
 #include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
@@ -30,6 +32,7 @@
 #include "avformat.h"
 #include "avio_internal.h"
 #include "internal.h"
+
 
 typedef struct VideoMuxData {
     const AVClass *class;  /**< Class for private options. */
